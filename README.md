@@ -3,20 +3,20 @@
 3D SLIC for ImageJ, under development: 
 
 
-Slic_ij_superpixels_3D.java 
+## Slic_ij_superpixels_3D.java 
 -> main class
 
-Threading.java
+## Threading.java
 -> contains functionality for threadign including the assignment and update step
 
-ConvertImage.java
+## ConvertImage.java
 -> coordinates color conversion. Determines image color space and calls color conversion functions
 
-ConvertColour.java
+## ConvertColour.java
 -> converts between color-spaces on a pixel-level. 
 
-Connectivity3d.java
+## Connectivity3d.java
 -> includes functionality for connectivity
 
-Labelling3D.java
+## Labelling3D.java
 -> visualization functions
