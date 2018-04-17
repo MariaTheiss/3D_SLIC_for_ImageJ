@@ -12,8 +12,6 @@ import org.scijava.plugin.Plugin;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
-import ij.process.ImageProcessor;
-import ij.process.StackProcessor;
 
 import java.lang.Math;
 import jSLIC3D.ThreadAssignment;
@@ -25,7 +23,7 @@ import jSLIC3D.Labelling3D;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+//import java.util.concurrent.TimeUnit;
 
 import imagescience.feature.Edges;
 import imagescience.image.Image;
@@ -37,66 +35,59 @@ import net.imagej.ImageJ;
 	menuPath = "Plugins>SLIC_superpixels_3D")
 public class Slic_ij_superpixels_3D  implements Command {
 	
-	
-
-	// segmentation paramters
-	protected int gridSize;
-
 
 	// -- Variables --
-
-	private int widthx, heighty, depthz;		// Dimensions of image stack [px]. Only for 3D images
-	private int[][][][] img3D = null;	// original image converted into LAB color space dim int[Width][Height][Depth][Channels]
+	private int widthx, heighty, depthz;		// Dimensions of the image [px]. 
+	private int[][][][] img3D = null;			// Array representation of the Image with LAB colors; int[Width][Height][Depth][Channels = L, A, B]	
 	
-	private int[][] clusterPosition = null;		// vector of cluster-center positions - dim int[nbClusters][n dims (3 for 3D)]
-	private int[][] clusterColor = null;		// vector of clusters color - dim int[nbClusters][channels]. For 8 bit gv channels = 1
-												// ... clusterColor is the mean L, A and B value for each cluster. 
-	
-	private int[][][] labels3D = null;			// labeling for each image pixel - dim int[Widthx][Heighty][Depthz]. Number corresponds to cluster.
-	private float[][][] distances3D = null;		// minimal distance per pixel according to assigned label (= cluster) 
-	private int nbLabels; 						// number of estimated segments (labels)
+	private int[][] clusterPosition = null;		// Clustercenters; dim = [k clusters][n dims (3 for 3D)]
+	private int[][] clusterColor = null;		// vector of clusters color - [k clusters][channels]
+												// ... clusterColor contains the mean L, A and B values for each cluster
+	private int[][][] labels3D = null;			// Clusterlabel of each image pixel; [Widthx][Heighty][Depthz]. Number corresponds to cluster index.
+	private float[][][] distances3D = null;		// Distance of each image pixel to its assigned cluster (Considering color and spatial distance)
+	private int nbLabels; 						// Number of estimated segments (labels)
 
-	private float errThreshold = 0.1f;			// stopping threshold in percent of initial error
-	private float factor;						// factor results from @parameter regul. Used to weight distance vs. color measure.
-	private float[] distGrid = null;			// distances of each pixel in a ~2 * 2 * 2 gridsize searchwindow from the cluster center. Array is 1D (z -> y -> x)
+	private float errThreshold = 0.1f;			// Stopping threshold in percent of initial error. Not used. TODO: integrate in code or delete
+	private float factor;						// Factor results from @parameter regul. Weights distance vs. color.
+	private float[] distGrid = null;			// Distances of each pixel in a 2 * 2 * 2 gridsize searchwindow from the cluster center. Array is 1D (z -> y -> x).
 
-	Color clrOverlay = null; 
 
-	
-	// set of colours
-//	private Map<String, Color> colorMap= new HashMap<String, Color>();
-	private Map<String, Color> colorMap= new HashMap<String, Color>();
-	private Color[] clrs = {null, Color.WHITE, Color.YELLOW, Color.RED, Color.GREEN, Color.BLUE, Color.BLACK};	//FIXME
+	// Contour colors
+	private Map<String, Color> colorMap= new HashMap<String, Color>();	// Maps a String to a Color. Used for function initOverlayColor
+	private Color[] clrs = {null, Color.WHITE, Color.YELLOW, Color.RED, Color.GREEN, Color.BLUE, Color.BLACK};	//TODO: More colors for colorblindness
 	private String[] clrString  = {"none", "white", "yellow", "red", "green", "blue", "black"};
+	
 
 	// -- Parameter --
+	protected int gridSize;
+	Color clrOverlay = null; 
+
 	@Parameter
 	ImagePlus imagePlus;	
 
 	@Parameter
 	ImageStack stack;
 	
-	@Parameter(label = "Grid size [px]")
+	@Parameter(label = "Grid size [px]")							// Gridsize controls superpixel size
 	int gSize = 40;
 	
-	@Parameter(min = "0f", stepSize = "0.1f", label = "Regul.")	//TODO: check if this is just in the GUI, or the real step size
+	@Parameter(min = "0f", stepSize = "0.05f", label = "Regul.")	// Regularzation controls superpixel compactness 
 	float regul = 0.5f;
 	
-	@Parameter(label = "Show ROIs")
+	@Parameter(label = "Show ROIs")									
 	boolean showROIs = true;
 
 	@Parameter (choices  = {"none", "white", "yellow", "red", "green", "blue", "black"}, label = "Border overlay color")
 	String color;
 	
-
-	public void initOverlayColor() {
-		
+	/**
+	 * Translates the color String chosen at the input dialog to a boundary color 
+	 */
+	public void initOverlayColor() {		
 		for (int i = 0; i < clrs.length; i++) {
 			colorMap.put(clrString[i], clrs[i]);
 		}
-		System.out.println(colorMap.get(color));
 		clrOverlay = colorMap.get(color);
-		
 	}
 	
 
@@ -104,8 +95,8 @@ public class Slic_ij_superpixels_3D  implements Command {
 	@Override
 	public void run() {
 		
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();
 		
 		try {
 			initOverlayColor();
@@ -117,27 +108,26 @@ public class Slic_ij_superpixels_3D  implements Command {
 		} finally {
 			System.out.println("jSLIC_superpixels_3D2 run unlock image");
 			imagePlus.unlock();
-			estimTime = System.currentTimeMillis() - startTime;
-
-			printInfo("runtime is: " + estimTime/1000 + " s");
+			
+//			estimTime = System.currentTimeMillis() - startTime;
+//			printInfo("runtime is: " + estimTime/1000 + " s");
 		}
 		
 	}
 
 	
 	/**
-	 * the whole processing method
+	 * the complete processing method. Core-function that calls most others
 	 */
 	public void process (int grid, float reg, int maxIter, float sizeThreshold) {
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();
 		
-		IJ.showProgress(0.);
-		//System.out.println("initVariables");
-		initVaribales(grid, reg);	// init jSLIC superpixels			
-		convertImage();
+			IJ.showProgress(0.);
+		initVaribales(grid, reg);			
+		convertImage();	// Convert Image to LAB, which is saved in img3D
 	
-		IJ.showProgress(20.);
+			IJ.showProgress(20.);
 
 		printInfo("Processing. Running with gridsize: " + Integer.toString(gridSize) + ", regularity " + Float.toString(regul) + ", factor: " + ((regul * regul) * (float)(gridSize)));
 		
@@ -145,26 +135,21 @@ public class Slic_ij_superpixels_3D  implements Command {
 		
 		float err, lastErr = Float.MAX_VALUE;
 //		float initErr = computeResidualError();	
-//		System.out.println(initErr);
-		float initErr = 0f;
+		float initErr = 0f; 	// For threshold calculation 
 	
 		computeDistGrid();
 
-		for (int i = 0; i < maxIter; i++) {
-			//for (int i = 0; i < 2; i++) {
-		
-			//IJ.showProgress(((i+1)/(double)maxIter) * 100.);
-			
+		for (int i = 0; i < maxIter; i++) {	// Iteratively assign pixels to clusters, compute the error and update cluster-centers
+	
 			assignmentParallel();
 
 			err = computeResidualError();
 			printInfo("Iter " + Integer.toString(i + 1) + ", inter. distance is " + Float.toString(err));
 			
 			updateParallel();
-			System.out.println(Float.MAX_VALUE + 10000000000000f);
 
-			// STOP if consecutive errors are smaller then given threshold
-			if ( (lastErr - err) < (initErr * errThreshold)) {	//initErr * errThreshold is always 0
+			// Stop iteration if error increases
+			if ( (lastErr - err) < (initErr * errThreshold)) {	// initErr * errThreshold currently always 0 //TODO: Delete or fix
 				printInfo("Terminated with diff error " + (lastErr-err));
 				i = maxIter;
 			} else {
@@ -173,45 +158,13 @@ public class Slic_ij_superpixels_3D  implements Command {
 			
 		}
 
-		
-		int maxlabel = 0;
-		for (int i = 0; i < labels3D.length; i++) {
-			for (int j = 0; j < labels3D[0].length; j++) {
-				for (int k = 0; k < labels3D[0][0].length; k++) {
-					
-					if(maxlabel < labels3D[i][j][k]) {
-						maxlabel = labels3D[i][j][k];
-					}
-				}
-			}
-		}
-		
-		printInfo("number of labels: " + maxlabel);
 	
-
 		enforceLabelConnectivity();
-//		printInfo("number of labels: " + nbLabels);
 
-		
-//		maxlabel = 0;
-//		for (int i = 0; i < labels3D.length; i++) {
-//			for (int j = 0; j < labels3D[0].length; j++) {
-//				for (int k = 0; k < labels3D[0][0].length; k++) {
-//					
-//					if(maxlabel < labels3D[i][j][k]) {
-//						maxlabel = labels3D[i][j][k];
-//					}
-//				}
-//			}
-//		}
-//		
-//		printInfo("number of labels: " + (maxlabel + 1));
-
-		
 		
 		IJ.showProgress(90.);
-		estimTime = System.currentTimeMillis() - startTime;	
-		printInfo("processing took: " + estimTime/1000 + " s");
+//		estimTime = System.currentTimeMillis() - startTime;	
+//		printInfo("processing took: " + estimTime/1000 + " s");
 			
 		showSegmentation ();
 					
@@ -226,15 +179,15 @@ public class Slic_ij_superpixels_3D  implements Command {
 	protected void initVaribales(int grid, float reg) {
 		printInfo("jSLIC3D initialisation...");
 		
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();
 
 		this.imagePlus = IJ.getImage();	
 		this.stack = imagePlus.getStack();
 		
 		// Check dimensions
-		int[] dims = imagePlus.getDimensions();	// dim int[width][height][nChannels][nSlices][nFrames]
-		if ((dims[2] != 1) || (dims[3] * dims[4]) == 1){	// TODO: read in frames as depthz if depth = 1 and frames != 1
+		int[] dims = imagePlus.getDimensions();	// dim = int[width][height][nChannels][nSlices][nFrames]
+		if ((dims[2] != 1) || (dims[3] * dims[4]) == 1){	
 			IJ.error("ERROR: Unsupported image dimensions!");
 		}
 		
@@ -250,45 +203,32 @@ public class Slic_ij_superpixels_3D  implements Command {
 
 		this.gridSize = (grid < 5) ? 5 : grid;
 		this.regul = (reg < 0) ? 0 : reg;
-
-		// regul in range {0,1}
-		this.factor = (regul * regul) * (float)(gridSize);	//TODO: check calculation
+		this.factor = (regul * regul) * (float)(gridSize);	
 
 
-		estimTime = System.currentTimeMillis() - startTime;
+	//	estimTime = System.currentTimeMillis() - startTime;
 		//printInfo("initializing variables took: " + estimTime/1000 + " s");
 	}
 	
-	
+	/**
+	 * Determining color model of Image. Convert to LAB and write values to img3D
+	 */
 	protected void convertImage() {
-		
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();		
-		
-		switch (imagePlus.getType()) {		//FIXME
+			
+		switch (imagePlus.getType()) {		// Determine color type
 
 			case ImagePlus.COLOR_RGB:
 				printInfo("converting RGB to cieLAB...");
-				this.img3D = ConvertImage.rgb2cieLABfast(this.imagePlus);		
-				
-				estimTime = System.currentTimeMillis() - startTime;
-				printInfo("converting RGB to cieLAB took: " + estimTime/1000 + " s");	
-				
+				this.img3D = ConvertImage.rgb2cieLABfast(this.imagePlus);						
 			break;
 		
 			// convert gray scale images
-
 			case ImagePlus.GRAY8:
 			case ImagePlus.GRAY16:
 			case ImagePlus.GRAY32:
 
 				printInfo("converting gray to cieLAB...");
-
 				this.img3D = ConvertImage.gray2cieLAB3D(this.imagePlus);
-
-				estimTime = System.currentTimeMillis() - startTime;
-				printInfo("converting gray to cieLAB took: " + estimTime/1000 + " s");	
-				
 				break;
 			default:
 				printInfo("ERROR: Unsupported color space!");
@@ -304,39 +244,34 @@ public class Slic_ij_superpixels_3D  implements Command {
 	void initClusters() {
 		printInfo("-> initializing clusters");
 		
-		// Calculate number of clusters
+		// Calculate number of clusters based on gridsize. Round number of clusters up. This results in smaller clusters at the imageborders. 
 		// Math.ceil impacts a bigger gridSize more than a smaller gridSize
 		int nbClusters = (int) (Math.ceil((float)widthx	 / (float)gridSize) * 
 								Math.ceil((float)heighty / (float)gridSize) * 
 								Math.ceil((float)depthz  / (float)gridSize));
 		
 		
-		//System.out.println("Number of clusters: " + nbClusters);
-		//clusterColor 
+	
 		clusterColor	= new int[nbClusters][img3D[0][0][0].length]; 		//img3D[0][0][0].length = 3 (nb of channels) 
 		clusterPosition	= new int[nbClusters][3]; 	// 
 		
-		// Actual initialization of clusters
-		
+		// Actual initialization of clusters	
 		int maxColumn = (int) Math.ceil(widthx  / (float)gridSize);	//maximum number of columns
 		int maxRow	  = (int) Math.ceil(heighty / (float)gridSize);	//maximum number of rows 
 		
-		labels3D = new int [widthx][heighty][depthz];
+		labels3D = new int [widthx][heighty][depthz];	//labels3D represents the image and contains cluster-indices at the corresponding pixel-positions
 		
 		for (int x = 0; x < widthx; x++ ) {
 			for (int y = 0; y < heighty; y++ ) {
 				for (int z = 0; z < depthz; z++) {
-
+					// Clusterindices are initialized as regular blocks. 
 					labels3D[x][y][z]= (int) ((x/gridSize) + (y/gridSize) * maxColumn + (z/gridSize) * maxColumn * maxRow);
-				//	stack.setVoxel(x, y, z, labels3D[x][y][z]);
 				}
 			}
 		}
 
-		updateParallel();
-		//clusterPosition = lowestGradient(image, clusterPosition);
-		lowestGradient(clusterPosition);	
-		//updateParallel(); //TODO: do i need this here again? 
+		updateParallel(); // call updatefunction to determine initial clustercenters and initial clustercolors 
+		lowestGradient(clusterPosition); // Shift clustercenters to the lowest gradient in their 3x3x3 px neighborhood. 
 
 		distGrid = null;
 
@@ -344,13 +279,15 @@ public class Slic_ij_superpixels_3D  implements Command {
 
 	}
 	
-	
+	/**
+	 * Shift cluster centers to the lowest gradient position in a 3x3x3 px neighborhood to avoid initializing them on an edge
+	 * Author: MT
+	 * @param clusterPosition: x, y, z coordinates of the clustercenters
+	 */
 	protected void lowestGradient (int[][] clusterPosition){
-		printInfo("-> computing lowest gradient position...");
-		
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();	
-		
+		printInfo("-> computing lowest gradient position...");		
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();	
 		
 		Edges edges = new Edges();									// instantiate FeatureJ -> edges
 		
@@ -363,7 +300,7 @@ public class Slic_ij_superpixels_3D  implements Command {
 		
 		double gv; 													// gv of clustercenter-voxel or connect 26 voxels around it
 		double gvOld;												// variable to save gv of previous looping 
-		int[][] connect26 = Connectivity3D.CONNECT26;			
+		int[][] connect26 = Connectivity3D.CONNECT26;				// 26 connectivity to index neighboring pixels
 		
 		// Genereate new clusterPosition array with invariant clustercenters as reference
 		int[][] clusterPositionNew = new int[clusterPosition.length][clusterPosition[0].length];
@@ -387,12 +324,12 @@ public class Slic_ij_superpixels_3D  implements Command {
 			}
 
 
-				// Save gv of cluster-center
+				// Save gv of the gradient image at the cluster-center
 				gv = gradientImagePlus.getStack().getVoxel(clusterPosition[c][0], clusterPosition[c][1], clusterPosition[c][2]);
 				
 				for (int n = 0; n < connect26.length; n++) {		// Loop over all neighbors of cluster-centers
 					
-					gvOld = gv;										// Save gv of cluster-center or previous loop-pass 
+					gvOld = gv;										// Save gv of previous loop-pass as gvOld
 		 
 
 					gv = gradientImagePlus.getStack().getVoxel(	clusterPositionNew[c][0] + connect26[n][0],  
@@ -415,21 +352,21 @@ public class Slic_ij_superpixels_3D  implements Command {
 		
 		this.clusterPosition = clusterPosition;
 		
-		estimTime = System.currentTimeMillis() - startTime;
-		printInfo("computing lowest gradient position took: " + estimTime/1000 + " s");
+//		estimTime = System.currentTimeMillis() - startTime;
+//		printInfo("computing lowest gradient position took: " + estimTime/1000 + " s");
 
 	}
 	
 
 	
 	/**
-	 * Assign cluster index to each pixel in image according the given metric
+	 * Update cluster centers and mean cluster color
 	 */
 	protected void updateParallel () {
 		printInfo(" -> fast parallel update running...");
 
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();	
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();	
 		
 		// reset count of pixels that belong to a specific cluster. 
 		int nbPixels[] = new int[clusterPosition.length];	// clusterPosition.length = Number of clusters. nbPixel[i] = nb of pixels in cluster i
@@ -439,23 +376,25 @@ public class Slic_ij_superpixels_3D  implements Command {
 		for(int[] subarray : clusterPosition) 	{	Arrays.fill(subarray, 0);	}
 		
 		final ThreadUpdate[] threads = new ThreadUpdate[Threading.nbAvailableThread()];
-		int deltaImg = (int) Math.ceil(widthx / (float)threads.length);		// divide image in slices (along x) with width deltaImg. -> assign as threads
+		int deltaImg = (int) Math.ceil(widthx / (float)threads.length);	// divide image in slices (along x) with width deltaImg. -> assign as threads
 		int endRange;
 
-		for (int iThread = 0; iThread < threads.length; iThread++) {
+		for (int iThread = 0; iThread < threads.length; iThread++) {	// Loop over all threads
 			
 			// Simultaneously run in as many threads as CPUs  
 			threads[iThread] = new ThreadUpdate(img3D, gridSize, clusterPosition, clusterColor, labels3D, nbPixels); 
-			// for all regular regions
-			// because of a rounding the last has to cover rest of image
 
-			endRange = (iThread + 1) * deltaImg;	// x-position at which the thread ends 
-			threads[iThread].setRangeImg(iThread * deltaImg, endRange, 0, heighty, 0, depthz); // bX, eX, bY, eY, bZ, eZ; b = begin, e = end. 
+			endRange = (iThread + 1) * deltaImg;	// x-position at which the currently looped over thread ends 
+			
+			// the portion of an image that is covered by a thread: iThread*deltaImg = x_begin, endRange = x_end, 
+			// 0 = y_start, heighty = y_end (= whole y-range); 0 = z_start, depthz = z_end (= whole z-range)
+			threads[iThread].setRangeImg(iThread * deltaImg, endRange, 0, heighty, 0, depthz); 
 		}
 		
-
-		Threading.startAndJoin(threads); 	//startAndJoin starts the passed thread, thus calls its run() method. here ThreadUpdate.run()
+		// up until now threads were only initialized. actual calculation starts now:
+		Threading.startAndJoin(threads); 	// startAndJoin starts the passed thread, thus calls ThreadUpdate.run()
 		
+		//nb: number of clusters, cL, cA, cB color to be summed up for each cluster-pixel. X, Y, Z: positions to be summed up for each cluster-pixel
 		int nb, cL, cA, cB, X, Y, Z;	
 		
 		// cycle over all clusters and divide them by nb pixels per cluster (= get mean position and color)
@@ -463,7 +402,7 @@ public class Slic_ij_superpixels_3D  implements Command {
 			
 			nb = 0; cL = 0; cA = 0; cB = 0; X = 0; Y = 0; Z = 0;
 			
-			// sum over threads
+			// sum up results of all threads
 			for (int i = 0; i < threads.length; i++) {
 				
 				// returns count of pixels per cluster and thread as calculated by ThreadUpdate.run()
@@ -486,18 +425,19 @@ public class Slic_ij_superpixels_3D  implements Command {
 			if (nb == 0) {		continue;	}
 			nbPixels[k] = nb;
 			
-			// over all color channels
+			// devide by number of pixels to get mean: 
+			// for all color channels
 			clusterColor[k][0] = cL / nb;
 			clusterColor[k][1] = cA / nb;
 			clusterColor[k][2] = cB / nb;
 			
-			// over all positions
+			// for all positions
 			clusterPosition[k][0] = X / nb;
 			clusterPosition[k][1] = Y / nb;
 			clusterPosition[k][2] = Z / nb;
 		}		
 		
-		estimTime = System.currentTimeMillis() - startTime;
+		//estimTime = System.currentTimeMillis() - startTime;
 		//printInfo("parallel updating took: " + estimTime/1000 + " s");
 	}
 	
@@ -508,16 +448,16 @@ public class Slic_ij_superpixels_3D  implements Command {
 	protected void computeDistGrid() {
 		printInfo(" -> pre-computing the distance grid matrix...");
 
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();		
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();		
 
 		int sz = 2 * gridSize + 1;				// search-window diameter
-		distGrid = new float[sz * sz * sz]; 	// sz*sz*sz corresponds to the (2*gridSize)^3 search windows pixel-count
+		distGrid = new float[sz * sz * sz]; 	// Search window size
 		float dx, dy, dz;
 		
-		// fill the array with distances to center
-		for (int x = 0; x < sz; x++ ) {
-			for (int y = 0; y < sz; y++ ) {
+		// save weighted distances to the center as a 1D array
+		for (int x = 0; x < sz; x++) {
+			for (int y = 0; y < sz; y++) {
 				for (int z = 0; z < sz; z++) {
 					
 					dx = x - gridSize + 1;
@@ -531,19 +471,15 @@ public class Slic_ij_superpixels_3D  implements Command {
 			}
 		}
 
-		estimTime = System.currentTimeMillis() - startTime;
-		printInfo("computing dist grid took: " + estimTime/1000 + " s");
+//		estimTime = System.currentTimeMillis() - startTime;
+//		printInfo("computing dist grid took: " + estimTime/1000 + " s");
 	}
 
+	
 	/**
-	 * Count residual distance to nearest clusters by given metric
-	 * 
-	 * @return float returns a sum over all distances to nearest cluster
+	 * @return err is the sum over all distances to the nearest cluster
 	 */
 	protected float computeResidualError () {
-
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();	
 		
 		float err = 0;
 
@@ -556,22 +492,19 @@ public class Slic_ij_superpixels_3D  implements Command {
 			}
 		}
 
-
-		estimTime = System.currentTimeMillis() - startTime;
-	//	printInfo("computing error took: " + estimTime/1000 + " s");
 		return err;
 	}
 	
 	
 	/**
-	 * Assign cluster index to each pixel in image according the given metric
+	 * Assign cluster index to each pixel in the image according to the given metric
 	 */
-	protected void assignmentParallel () {
+	protected void assignmentParallel () {	//TODO: try out other function to accelerate assignment. 
 		printInfo(" -> fast parallel assignement running...");
-		long startTime, estimTime;
-		startTime = System.currentTimeMillis();	
+//		long startTime, estimTime;
+//		startTime = System.currentTimeMillis();	
 		
-		// fill distances3D with highest possible positive Float value.  
+		// fill distances3D with highest possible positive float value.  
 		for(float[][] subarray : distances3D) {			
 			for(float[] subsubarray: subarray) {
 				Arrays.fill(subsubarray, Float.MAX_VALUE);	
@@ -579,16 +512,16 @@ public class Slic_ij_superpixels_3D  implements Command {
 		}
 		
 		final ThreadAssignment[] threads = new ThreadAssignment[Threading.nbAvailableThread()];
-		int deltaImg = (int) Math.ceil(widthx / (float)threads.length); 
+		int deltaImg = (int) Math.ceil(widthx / (float)threads.length); // divide image in slices (along x) with width deltaImg. -> assign as threads
 		int endRange;
-		
+
 		for (int iThread = 0; iThread < threads.length; iThread++) {
 			
 			// Concurrently run in as many threads as CPUs  
 			threads[iThread] = new ThreadAssignment(img3D, gridSize, distGrid, clusterPosition, clusterColor, distances3D, labels3D);
-			// for all regular regions
-			// because of a rounding the last has to cover rest of image
 
+			// the portion of an image that is covered by a thread: iThread*deltaImg = x_begin, endRange = x_end, 
+			// 0 = y_start, heighty = y_end (= whole y-range); 0 = z_start, depthz = z_end (= whole z-range)
 			endRange = (iThread + 1) * deltaImg;
 			threads[iThread].setRangeImg(iThread * deltaImg, endRange, 0, heighty, 0, depthz); 
 		
@@ -597,8 +530,8 @@ public class Slic_ij_superpixels_3D  implements Command {
 
 		Threading.startAndJoin(threads); // startAndJoin calls ThreadAssignment.run()
 		
-		estimTime = System.currentTimeMillis() - startTime;
-		printInfo("parallel assignment took: " + estimTime/1000 + " s");
+//		estimTime = System.currentTimeMillis() - startTime;
+//		printInfo("parallel assignment took: " + estimTime/1000f + " s");
 	}
 	
 
@@ -615,31 +548,15 @@ public class Slic_ij_superpixels_3D  implements Command {
 	 * 2. if a certain component is too small, assigning the previously found
 	 *    adjacent label to this component, and not incrementing the label.
 	 */
-	protected void enforceLabelConnectivity() {
-		
-		int maxlabel = 0;
-		for (int i = 0; i < labels3D.length; i++) {
-			for (int j = 0; j < labels3D[0].length; j++) {
-				for (int k = 0; k < labels3D[0][0].length; k++) {
-					
-					if(maxlabel < labels3D[i][j][k]) {
-						maxlabel = labels3D[i][j][k];
-					}
-				}
-			}
-		}
+	protected void enforceLabelConnectivity() { //FIXME: Does not work in 3D
 
-		System.out.println("maxLabel: "+ (maxlabel + 1));
-	
-		printInfo("maxLabel: "+ (maxlabel + 1));
-		
 		printInfo("Enforce label connectivity.");
 		
 //		ImageStack stack = imagePlus.getStack();
 		long startTime, estimTime;
 		startTime = System.currentTimeMillis();	
 		
-		// 6-connectivity	... TODO: check if this makes sense
+		// 6-connectivity
 		final int[] dx = {-1,  0,  0,  1,  0,  0 };	//x, y, x, y -> x, y, z, x, y, z
 		final int[] dy = { 0, -1,  0,  0,  1,  0 };
 		final int[] dz = { 0,  0, -1,  0,  0,  1 }; 	
@@ -648,7 +565,7 @@ public class Slic_ij_superpixels_3D  implements Command {
 //		final int dy[] = { 0, -1,  0,  1, -1, -1,  1,  1,  0, 0};
 //		final int dz[] = { 0,  0,  0,  0,  0,  0,  0,  0, -1, 1};
 		
-		// 27-connectivity
+		// 26-connectivity
 //		final int dx[] = {0,-1,-1,-1, 0, 1, 1, 1, 0,-1,-1,-1, 0, 1, 1, 1, 0,-1,-1,-1, 0, 1, 1, 1, 0, 0, 0};
 //		final int dy[] = {0, 1, 0,-1,-1,-1, 0, 1, 1, 1, 0,-1,-1,-1, 0, 1, 1, 1, 0,-1,-1,-1, 0, 1, 1, 0, 0};
 //		final int dz[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,-1,-1,-1,-1,-1,-1,-1,-1,-1, 0};
@@ -661,10 +578,10 @@ public class Slic_ij_superpixels_3D  implements Command {
 		// area of initial superpixel
 		int supvol = gridSize * gridSize * gridSize;	
 		
-		// create new array of labels and fill with -1
+		// create new array of labels and fill it with -1
 		int[][][] nlabels = new int[widthx][heighty][depthz];
 		
-		for(int[][] subarray : nlabels) { 		//TODO: doublecheck
+		for(int[][] subarray : nlabels) { 		
 			for(int[] subsubarray: subarray) {
 				Arrays.fill(subsubarray, -1); 
 			} 
@@ -674,6 +591,7 @@ public class Slic_ij_superpixels_3D  implements Command {
 		int x, y, z;
 		int lab = 0;
 		int adjlabel = 0; //adjacent label
+		
 		// array of coordinates for all elements in the actual segment
 		int[] xvec = new int[imagevol];
 		int[] yvec = new int[imagevol];
@@ -709,7 +627,7 @@ public class Slic_ij_superpixels_3D  implements Command {
 				}
 			
 				count = 1; // segment size
-				// region growing method and storing pixels belongs to segment
+				// region growing method and storing pixels that belong to the segment
 				for( int c = 0; c < count; c++ ) {
 					for( int n = 0; n < dx.length; n++ ) {
 						x = xvec[c] + dx[n];
@@ -752,61 +670,30 @@ public class Slic_ij_superpixels_3D  implements Command {
 		}
 		labels3D = nlabels;
 		nbLabels = lab;
-		//printInfo("number of labels: " + nbLabels);
 
-		maxlabel = 0;
-		for (int i = 0; i < labels3D.length; i++) {
-			for (int j = 0; j < labels3D[0].length; j++) {
-				for (int k = 0; k < labels3D[0][0].length; k++) {
-					
-					if(maxlabel < labels3D[i][j][k]) {
-						maxlabel = labels3D[i][j][k];
-					}
-				}
-			}
-		}
-//
-//		
-//		printInfo("maxLabel after enforcing labelconnectivity: "+ (maxlabel + 1));
-		System.out.println("maxLabel after enforcing labelconnectivity: "+ (maxlabel + 1));
-		
-		
-		
-		estimTime = System.currentTimeMillis() - startTime;
-		printInfo("enforcing label connectivity took: " + estimTime/1000 + " s");
 	}
 	
 	
 	/**
-	 * used only for presenting the segmentation results
+	 * Visual output of segmentation 
 	 */
 	protected void showSegmentation() {
 		printInfo("jSLIC3D visualisation...");
-		
-		long startTime, estimTime;
 
-		// show the ROI in ROI manager
-		if (showROIs) {
-			startTime = System.currentTimeMillis();	
+		if (showROIs) {	// Colorcoding of vesicles. Roi Manager is currently commented out in Labelling3D
+
 			ij.IJ.log(" -> show ROI manager");
 			//sp.getSegmentation().showOverlapROIs(imagePlus);
-			
 			getSegmentation().superPixelRois(labels3D);
-			
-			estimTime = System.currentTimeMillis() - startTime;
-			printInfo("showing labels as color took: " + estimTime/1000 + " s");
+
 		}
 		
 		
 		// show the general Overlay
 		if (clrOverlay != null) {
-			startTime = System.currentTimeMillis();
-			
 			ij.IJ.log(" -> show contour overlap");
-
 			getSegmentation().showOverlapContours(imagePlus, clrOverlay);
-			estimTime = System.currentTimeMillis() - startTime;
-			printInfo("showing contours took: " + estimTime/1000 + " s");
+
 		}
 		
 	}
