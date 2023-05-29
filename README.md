@@ -1,4 +1,13 @@
-# 3D SLIC for ImageJ, under development: 
+# 3D SLIC for ImageJ
+3D version of jSLIC: 
+https://imagej.net/plugins/cmp-bia-tools/ 
+See also: 
+https://core.ac.uk/download/pdf/47181098.pdf
+
+I finished this work in 2018 and it did generate 3D superpixels as a Fiji plugin. 
+There were remaining issues with anisotropic pixel-sizes. 
+This code might not function out of the box anymore. 
+
 ## Overview of .java files: 
 
 ### Slic_ij_superpixels_3D.java 
